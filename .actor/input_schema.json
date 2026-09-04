@@ -1,0 +1,15 @@
+{
+    "$schema": "https://apify.com/schemas/v1/input.ide.json",
+    "title": "Mendoza Compras Monitor Configuration",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "maxItems": {
+            "title": "Max processes to extract",
+            "type": "integer",
+            "description": "Hard cap on the number of processes returned this run. The unfiltered backlog is very large (25,000+ processes at audit time, 10 per page) - this actor does not yet expose the advanced-search filters (date range, organism, process type) seen on the source's own form, since their exact parameter values were not live-verified before v1 shipped. Start small; raise gradually.",
+            "default": 100,
+            "minimum": 1
+        }
+    }
+}

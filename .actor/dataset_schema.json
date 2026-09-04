@@ -1,0 +1,38 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "actorSpecification": 1,
+    "title": "Dataset Schema",
+    "fields": {
+        "type": "object",
+        "properties": {
+            "numeroProceso": { "title": "Numero Proceso", "type": "string", "description": "e.g. 10201-0001-CDI20" },
+            "nombreProceso": { "title": "Nombre Proceso", "type": "string" },
+            "tipoProceso": { "title": "Tipo Proceso", "type": "string", "description": "e.g. Contratacion Directa, Licitacion Publica" },
+            "fechaApertura": { "title": "Fecha Apertura", "type": "string" },
+            "estado": { "title": "Estado", "type": "string" },
+            "unidadEjecutora": { "title": "Unidad Ejecutora", "type": "string" },
+            "servicioAdministrativoFinanciero": { "title": "Servicio Administrativo Financiero", "type": "string" },
+            "monto": { "title": "Monto", "type": "string" },
+            "scrapedAt": { "title": "Scraped at", "type": "string" }
+        }
+    },
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": ["numeroProceso", "nombreProceso", "tipoProceso", "estado", "unidadEjecutora", "monto"]
+            },
+            "display": {
+                "component": "table",
+                "columns": [
+                    { "label": "Numero", "format": "text", "field": "numeroProceso" },
+                    { "label": "Nombre", "format": "text", "field": "nombreProceso" },
+                    { "label": "Tipo", "format": "text", "field": "tipoProceso" },
+                    { "label": "Estado", "format": "text", "field": "estado" },
+                    { "label": "Unidad Ejecutora", "format": "text", "field": "unidadEjecutora" },
+                    { "label": "Monto", "format": "text", "field": "monto" }
+                ]
+            }
+        }
+    }
+}

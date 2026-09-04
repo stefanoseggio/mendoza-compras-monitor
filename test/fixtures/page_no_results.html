@@ -1,0 +1,27 @@
+<!--
+Hand-built minimal fixture, not a live capture: the real backlog is
+25,784+ processes and growing, so chasing the exact out-of-range page
+boundary would be a moving target (same lesson as
+cordoba-compras-monitor's page_no_results.html fixture). This encodes the
+real GridView's own "no rows" shape - header row present, empty tbody -
+which is standard, well-documented ASP.NET GridView behavior when a
+DataBind produces zero rows for the current page.
+-->
+<html>
+<body>
+<form method="post" id="aspnetForm">
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="abc123" />
+<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="XYZ" />
+<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="def456" />
+<table class="table table-hover table-striped table-condensed" cellspacing="0" border="0" id="ctl00_CPH1_GridListaPliegos">
+<thead>
+<tr class="tr-header">
+<th scope="col">Número proceso</th><th scope="col">Nombre proceso</th><th scope="col">Tipo de Proceso</th><th scope="col">Fecha de apertura</th><th scope="col">Estado</th><th scope="col">Unidad Ejecutora</th><th scope="col">Servicio Administrativo Financiero</th><th scope="col">Monto</th>
+</tr>
+</thead>
+<tbody>
+</tbody>
+</table>
+</form>
+</body>
+</html>
