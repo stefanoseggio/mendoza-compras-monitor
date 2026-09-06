@@ -28,15 +28,17 @@ describe('parseGrid', () => {
         expect(first.unidadEjecutora).toContain('Suprema Corte');
         expect(first.servicioAdministrativoFinanciero).toContain('Hab. Poder Judicial');
         expect(first.monto).toBe('1869000,00');
+        expect(first.linkTarget).toBe('ctl00$CPH1$GridListaPliegos$ctl02$lnkNumeroProceso');
     });
 
-    it('every row has a well-formed numeroProceso and non-empty core fields', () => {
+    it('every row has a well-formed numeroProceso, non-empty core fields, and a usable postback linkTarget', () => {
         const $ = loadFixture('page1.html');
         const rows = parseGrid($);
         for (const row of rows) {
             expect(row.numeroProceso.length).toBeGreaterThan(0);
             expect(row.tipoProceso.length).toBeGreaterThan(0);
             expect(row.estado.length).toBeGreaterThan(0);
+            expect(row.linkTarget).toMatch(/^ctl00\$CPH1\$GridListaPliegos\$ctl\d+\$lnkNumeroProceso$/);
         }
     });
 

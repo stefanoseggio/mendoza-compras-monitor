@@ -2,9 +2,10 @@ import { log } from 'apify';
 import type { CheerioAPI } from 'cheerio';
 import * as cheerio from 'cheerio';
 
+import { type DateRangePreset, isWithinDateRange, parseFechaApertura } from './dateFilter.js';
 import { buildPostbackPayload } from './parsers/form.js';
 import { parseGrid } from './parsers/grid.js';
-import type { TenderRow } from './types.js';
+import type { ParsedTenderRow, TenderRow } from './types.js';
 
 const HOME_URL = 'https://comprar.mendoza.gov.ar/';
 const SEARCH_URL = 'https://comprar.mendoza.gov.ar/BuscarAvanzado2.aspx';
@@ -78,6 +79,53 @@ async function requestWithRetry(options: FetchOptions, maxRetries = 4, baseDelay
     throw lastError;
 }
 
+// Replays a single row's own postback link to resolve its real permalink.
+// Verified live 2026-09-06: clicking a row's "numeroProceso" link
+// redirects to PLIEGO/VistaPreviaPliegoCiudadano.aspx?qs=<token> - a
+// standalone, cookie-independent URL that resolves correctly even with no
+// prior session at all (confirmed with a bare fetch, zero cookies). The
+// same page's ViewState can be reused for every row on it, in any order,
+// without disturbing that page's own further pagination - also verified
+// live (4 sequential row-detail postbacks from one page's ViewState,
+// followed by the normal Page$2 postback from that same unmodified
+// ViewState, both succeeded). This intentionally does NOT feed the detail
+// response's Set-Cookie back into the caller's cookie jar - it's a
+// side-channel read, isolated from the main pagination session state.
+async function resolveSourceUrl($: CheerioAPI, cookie: string | null, linkTarget: string): Promise<string | null> {
+    try {
+        const payload = buildPostbackPayload($, linkTarget, '');
+        const response = await requestWithRetry({
+            url: SEARCH_URL,
+            method: 'POST',
+            body: new URLSearchParams(payload).toString(),
+            cookie,
+        });
+        return response.url || null;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.warning(`No se pudo resolver la URL directa del proceso tras reintentos: ${message}`);
+        return null;
+    }
+}
+
+export interface FetchTendersOptions {
+    maxItems: number;
+    onlyNew: boolean;
+    dateRange?: DateRangePreset;
+    seenIds: ReadonlySet<string>;
+    now: Date;
+}
+
+export interface FetchTendersResult {
+    tenders: TenderRow[];
+    // Every raw numeroProceso walked this run (up to maxItems), regardless
+    // of whether onlyNew/dateRange kept it in `tenders` - this is what gets
+    // persisted as "seen" for next run, matching the same precedent as
+    // uk-hse-enforcement-monitor (a dateRange-excluded record was still
+    // genuinely observed, so it shouldn't look "new" again next time).
+    allIdsThisRun: string[];
+}
+
 // Verified live 2026-09-04: comprar.mendoza.gov.ar (COMPR.AR) is reachable
 // without a proxy, and although the site DOES have real DevExpress
 // controls (ASPxDateEdit, ASPxCallback, UpdatePanel, ScriptManager) - the
@@ -92,18 +140,53 @@ async function requestWithRetry(options: FetchOptions, maxRetries = 4, baseDelay
 // bespoke sliding-window pager which required walking through empty
 // "next block" slots. This makes the fetch loop here simpler: just
 // increment the page number, no pager-window bookkeeping needed.
-export async function fetchTenders(maxItems: number): Promise<TenderRow[]> {
-    const results: TenderRow[] = [];
-    const seenIds = new Set<string>();
+//
+// Delta engine (2026-09-06 retrofit): `maxItems` still caps the RAW number
+// of processes walked, exactly as before - onlyNew/dateRange are applied
+// as POST-filters on top (see AGENTS.md for why this is a safe post-filter
+// rather than early-stop pagination: this listing is sorted by numero de
+// proceso ascending, NOT newest-first, verified live).
+export async function fetchTenders(options: FetchTendersOptions): Promise<FetchTendersResult> {
+    const { maxItems, onlyNew, dateRange, seenIds, now } = options;
+    const scrapedAt = now.toISOString();
 
-    function pushUnique(rows: TenderRow[]): number {
+    const rawIds = new Set<string>(); // dedup + raw maxItems cap, same role the old `seenIds` Set played
+    const tenders: TenderRow[] = [];
+
+    async function processRows(rows: ParsedTenderRow[], $: CheerioAPI, cookie: string | null): Promise<number> {
         let added = 0;
         for (const row of rows) {
-            if (results.length >= maxItems) break;
-            if (seenIds.has(row.numeroProceso)) continue;
-            seenIds.add(row.numeroProceso);
-            results.push(row);
+            if (rawIds.size >= maxItems) break;
+            if (rawIds.has(row.numeroProceso)) continue;
+            rawIds.add(row.numeroProceso);
             added += 1;
+
+            const isNew = !seenIds.has(row.numeroProceso);
+            if (onlyNew && !isNew) continue;
+            if (dateRange && !isWithinDateRange(parseFechaApertura(row.fechaApertura), dateRange, now)) continue;
+
+            const sourceUrl = row.linkTarget ? await resolveSourceUrl($, cookie, row.linkTarget) : null;
+
+            tenders.push({
+                numeroProceso: row.numeroProceso,
+                nombreProceso: row.nombreProceso,
+                tipoProceso: row.tipoProceso,
+                fechaApertura: row.fechaApertura,
+                estado: row.estado,
+                unidadEjecutora: row.unidadEjecutora,
+                servicioAdministrativoFinanciero: row.servicioAdministrativoFinanciero,
+                monto: row.monto,
+                record_id: row.numeroProceso,
+                event_type: 'NEW_LISTING',
+                scraped_at: scrapedAt,
+                is_new: isNew,
+                // Degraded fallback if the per-row permalink couldn't be
+                // resolved (missing link markup, or the extra postback
+                // failed after retries) - still a real, useful URL (the
+                // search page itself), just not process-specific. Disclosed
+                // in AGENTS.md/README, not silently swallowed.
+                source_url: sourceUrl ?? SEARCH_URL,
+            });
         }
         return added;
     }
@@ -138,12 +221,12 @@ export async function fetchTenders(maxItems: number): Promise<TenderRow[]> {
     $ = cheerio.load(html);
 
     const page1Rows = parseGrid($);
-    pushUnique(page1Rows);
+    await processRows(page1Rows, $, cookie);
     log.info(`Pagina 1: ${page1Rows.length} procesos`);
 
     let previousFirstId = page1Rows[0]?.numeroProceso ?? null;
 
-    for (let pageNum = 2; pageNum <= MAX_PAGES_SAFETY_CAP && results.length < maxItems; pageNum++) {
+    for (let pageNum = 2; pageNum <= MAX_PAGES_SAFETY_CAP && rawIds.size < maxItems; pageNum++) {
         const pagePayload = buildPostbackPayload($, GRID_TARGET, `Page$${pageNum}`);
         let response: Response;
         try {
@@ -176,11 +259,13 @@ export async function fetchTenders(maxItems: number): Promise<TenderRow[]> {
         }
         previousFirstId = firstId;
 
-        pushUnique(rows);
+        await processRows(rows, $, cookie);
         if (pageNum % 20 === 0 || rows.length < PAGE_SIZE) {
-            log.info(`Pagina ${pageNum}: ${rows.length} procesos (acumulado: ${results.length})`);
+            log.info(
+                `Pagina ${pageNum}: ${rows.length} procesos (acumulado crudo: ${rawIds.size}, en salida: ${tenders.length})`,
+            );
         }
     }
 
-    return results;
+    return { tenders, allIdsThisRun: Array.from(rawIds) };
 }
