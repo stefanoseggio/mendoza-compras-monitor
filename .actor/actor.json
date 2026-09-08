@@ -2,9 +2,9 @@
     "$schema": "https://apify.com/schemas/v1/actor.ide.json",
     "actorSpecification": 1,
     "name": "mendoza-compras-monitor",
-    "title": "Mendoza Compras Monitor",
+    "title": "Mendoza Tenders Scraper & Monitor",
     "description": "Extracts public procurement processes (licitaciones, contrataciones directas) from the Province of Mendoza, Argentina's COMPR.AR-based portal, with type, status, organism and budget per process.",
-    "version": "1.0",
+    "version": "2.0",
     "buildTag": "latest",
     "minMemoryMbytes": 256,
     "maxMemoryMbytes": 512,
@@ -17,5 +17,6 @@
     "storages": {
         "dataset": "./dataset_schema.json"
     },
+    "changelog": "../CHANGELOG.md",
     "dockerfile": "../Dockerfile"
 }

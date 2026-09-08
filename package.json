@@ -1,6 +1,6 @@
 {
     "name": "mendoza-compras-monitor",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "type": "module",
     "description": "Mendoza Compras Monitor: extracts public procurement processes (licitaciones, contrataciones directas) from the Province of Mendoza, Argentina's COMPR.AR-based portal, with type, status, organism and budget per process.",
     "engines": {
@@ -24,7 +24,7 @@
         "vitest": "^4.1.0"
     },
     "scripts": {
-        "start": "npm run start:dev",
+        "start": "node dist/main.js",
         "start:prod": "node dist/main.js",
         "start:dev": "tsx src/main.ts",
         "build": "tsc",

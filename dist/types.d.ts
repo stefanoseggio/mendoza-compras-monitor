@@ -1,5 +1,4 @@
 import type { DateRangePreset } from './dateFilter.js';
-
 /**
  * NEW_LISTING: numeroProceso never seen before. STATUS_CHANGE: seen before, `estado` differs
  * from last time (e.g. "Pendiente Análisis" -> "Adjudicado") - a real lifecycle transition,
@@ -12,7 +11,6 @@ import type { DateRangePreset } from './dateFilter.js';
  * way it can on a ~250-register source. See AGENTS.md "Delta engine v2".
  */
 export type EventType = 'NEW_LISTING' | 'STATUS_CHANGE' | 'UPDATED' | 'UNCHANGED';
-
 export interface ActorInput {
     maxItems: number;
     onlyNew: boolean;
@@ -28,12 +26,6 @@ export interface ActorInput {
      */
     resolveSourceUrl: boolean;
 }
-
-// Raw fields parsed straight off the results grid, before the standardized
-// B2B envelope is attached. `linkTarget` is the row's own __EVENTTARGET
-// (derived from its <a id="..."> postback link) used to resolve source_url
-// via one extra postback - see fetchTenders.ts. It is internal plumbing,
-// never pushed to the dataset as-is.
 export interface ParsedTenderRow {
     numeroProceso: string;
     nombreProceso: string;
@@ -45,7 +37,6 @@ export interface ParsedTenderRow {
     monto: string;
     linkTarget: string | null;
 }
-
 export interface TenderRow {
     numeroProceso: string;
     nombreProceso: string;
@@ -55,9 +46,6 @@ export interface TenderRow {
     unidadEjecutora: string;
     servicioAdministrativoFinanciero: string;
     monto: string;
-    // Standardized B2B integration envelope - consistent across this
-    // portfolio's fleet (see uk-hse-enforcement-monitor for the origin of
-    // this contract).
     record_id: string;
     event_type: EventType;
     scraped_at: string;
@@ -70,5 +58,5 @@ export interface TenderRow {
     /** sha1 content fingerprint as of this run - see src/fingerprint.ts. */
     contentHash: string;
 }
-
 export type FormFields = Record<string, string>;
+//# sourceMappingURL=types.d.ts.map

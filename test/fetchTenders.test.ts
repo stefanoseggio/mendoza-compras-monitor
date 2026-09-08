@@ -1,9 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import * as cheerio from 'cheerio';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchTenders } from '../src/fetchTenders.js';
+import { fingerprintOf } from '../src/fingerprint.js';
+import { parseGrid } from '../src/parsers/grid.js';
+import type { DeltaState, SeenEntry } from '../src/state.js';
 
 const fixturesDir = fileURLToPath(new URL('./fixtures', import.meta.url));
 const PAGE1 = readFileSync(`${fixturesDir}/page1.html`, 'utf-8');
@@ -11,8 +15,9 @@ const PAGE2 = readFileSync(`${fixturesDir}/page2.html`, 'utf-8');
 const NO_RESULTS = readFileSync(`${fixturesDir}/page_no_results.html`, 'utf-8');
 
 const NOW = new Date('2026-09-06T12:00:00.000Z');
+const EMPTY_STATE: DeltaState = { entries: {}, lastRunAt: null };
 
-// A row-detail postback (see resolveSourceUrl in src/fetchTenders.ts)
+// A row-detail postback (see resolveSourceUrlPostback in src/fetchTenders.ts)
 // doesn't return real page HTML in production either - only its final
 // `response.url` is read. This fake mirrors that shape 1:1 while making
 // the resolved URL deterministic per row, so tests can assert the correct
@@ -53,6 +58,13 @@ function mockFetchSequence(): ReturnType<typeof vi.fn> {
     return fetchMock;
 }
 
+// Real page-1 rows, parsed once, for building realistic previous-state entries in tests below.
+const page1Rows = parseGrid(cheerio.load(PAGE1));
+
+function stateWith(overrides: Record<string, SeenEntry>): DeltaState {
+    return { entries: overrides, lastRunAt: null };
+}
+
 describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures)', () => {
     beforeEach(() => {
         mockFetchSequence();
@@ -62,22 +74,24 @@ describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures
         vi.unstubAllGlobals();
     });
 
-    it('cold run (empty seen-set): marks every returned record is_new=true and resolves each its own source_url', async () => {
-        const { tenders, allIdsThisRun } = await fetchTenders({
+    it('cold run (empty state): marks every returned record NEW_LISTING/is_new=true and resolves each its own source_url', async () => {
+        const { tenders, observedThisRun } = await fetchTenders({
             maxItems: 3,
             onlyNew: false,
-            seenIds: new Set(),
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
             now: NOW,
         });
 
         expect(tenders).toHaveLength(3);
-        expect(allIdsThisRun).toEqual(['10201-0001-CDI20', '10201-0001-CDI21', '10201-0001-CDI22']);
+        expect(observedThisRun.map((o) => o.id)).toEqual(['10201-0001-CDI20', '10201-0001-CDI21', '10201-0001-CDI22']);
         for (const tender of tenders) {
             expect(tender.is_new).toBe(true);
             expect(tender.event_type).toBe('NEW_LISTING');
             expect(tender.record_id).toBe(tender.numeroProceso);
             expect(tender.scraped_at).toBe(NOW.toISOString());
             expect(tender.source_url).toContain('lnkNumeroProceso');
+            expect(tender.sourceUrlResolved).toBe(true);
         }
         // each row's source_url is genuinely tied to ITS OWN postback link,
         // not a shared/static value
@@ -86,44 +100,101 @@ describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures
         expect(tenders[2].source_url).toContain('ctl04');
     });
 
-    it('onlyNew with a fully-seen state returns zero records, WITHOUT stopping pagination early (safe post-filter, not early-stop)', async () => {
+    it('resolveSourceUrl=false skips the per-row postback entirely and falls back to the search page', async () => {
         const fetchMock = mockFetchSequence();
-        // Seed the seen-set with every id from BOTH page 1 and page 2 -
+        const { tenders } = await fetchTenders({
+            maxItems: 3,
+            onlyNew: false,
+            resolveSourceUrl: false,
+            state: EMPTY_STATE,
+            now: NOW,
+        });
+
+        expect(tenders).toHaveLength(3);
+        for (const t of tenders) {
+            expect(t.sourceUrlResolved).toBe(false);
+            expect(t.source_url).toBe('https://comprar.mendoza.gov.ar/BuscarAvanzado2.aspx');
+        }
+        const detailCalls = fetchMock.mock.calls.filter(([, init]) => {
+            const body = typeof (init as RequestInit | undefined)?.body === 'string' ? ((init as RequestInit).body as string) : '';
+            return new URLSearchParams(body).get('__EVENTTARGET')?.endsWith('lnkNumeroProceso');
+        });
+        expect(detailCalls).toHaveLength(0);
+    });
+
+    it('classifies a known id with a different estado as STATUS_CHANGE', async () => {
+        const target = page1Rows[0]; // 10201-0001-CDI20
+        const state = stateWith({ [target.numeroProceso]: { estado: 'Pendiente Análisis (a stale value)', hash: 'irrelevant' } });
+
+        const { tenders } = await fetchTenders({ maxItems: 1, onlyNew: true, resolveSourceUrl: true, state, now: NOW });
+
+        expect(tenders).toHaveLength(1);
+        expect(tenders[0].event_type).toBe('STATUS_CHANGE');
+        expect(tenders[0].is_new).toBe(false);
+    });
+
+    it('classifies a known id, same estado, different fingerprint as UPDATED', async () => {
+        const target = page1Rows[0];
+        const state = stateWith({ [target.numeroProceso]: { estado: target.estado, hash: 'a-hash-that-will-never-match' } });
+
+        const { tenders } = await fetchTenders({ maxItems: 1, onlyNew: true, resolveSourceUrl: true, state, now: NOW });
+
+        expect(tenders).toHaveLength(1);
+        expect(tenders[0].event_type).toBe('UPDATED');
+    });
+
+    it('classifies a known id, same estado, same fingerprint as UNCHANGED - delivered only when onlyNew=false', async () => {
+        const target = page1Rows[0];
+        const state = stateWith({ [target.numeroProceso]: { estado: target.estado, hash: fingerprintOf(target) } });
+
+        const full = await fetchTenders({ maxItems: 1, onlyNew: false, resolveSourceUrl: true, state, now: NOW });
+        expect(full.tenders).toHaveLength(1);
+        expect(full.tenders[0].event_type).toBe('UNCHANGED');
+
+        const delta = await fetchTenders({ maxItems: 1, onlyNew: true, resolveSourceUrl: true, state, now: NOW });
+        expect(delta.tenders).toHaveLength(0);
+    });
+
+    it('eventTypes restricts delivery to the requested subset', async () => {
+        const target = page1Rows[0];
+        const state = stateWith({ [target.numeroProceso]: { estado: 'a stale estado', hash: 'x' } }); // -> STATUS_CHANGE
+
+        const { tenders } = await fetchTenders({
+            maxItems: 2, // target + the next unseen row (-> NEW_LISTING)
+            onlyNew: false,
+            eventTypes: ['STATUS_CHANGE'],
+            resolveSourceUrl: true,
+            state,
+            now: NOW,
+        });
+
+        expect(tenders).toHaveLength(1);
+        expect(tenders[0].numeroProceso).toBe(target.numeroProceso);
+        expect(tenders[0].event_type).toBe('STATUS_CHANGE');
+    });
+
+    it('onlyNew with a fully-seen, unchanged state returns zero records, WITHOUT stopping pagination early (safe post-filter, not early-stop)', async () => {
+        const fetchMock = mockFetchSequence();
+        // Seed the state with every id from BOTH page 1 and page 2, unchanged -
         // an early-stop implementation would give up after the first
         // "fully known" page; a safe post-filter must keep walking to
         // maxItems regardless, since this source is not newest-first.
-        const page1Ids = [
-            '10201-0001-CDI20',
-            '10201-0001-CDI21',
-            '10201-0001-CDI22',
-            '10201-0001-CDI23',
-            '10201-0001-CDI24',
-            '10201-0001-CDI25',
-            '10201-0001-CDI26',
-            '10201-0001-LPU19',
-            '10201-0001-LPU20',
-            '10201-0001-LPU21',
-        ];
-        const page2Ids = [
-            '10201-0001-LPU22',
-            '10201-0001-LPU23',
-            '10201-0001-LPU24',
-            '10201-0001-LPU25',
-            '10201-0001-LPU26',
-        ];
-        const seenIds = new Set([...page1Ids, ...page2Ids]);
+        const page2Rows = parseGrid(cheerio.load(PAGE2));
+        const entries: Record<string, SeenEntry> = {};
+        for (const row of [...page1Rows, ...page2Rows]) entries[row.numeroProceso] = { estado: row.estado, hash: fingerprintOf(row) };
 
-        const { tenders, allIdsThisRun } = await fetchTenders({
+        const { tenders, observedThisRun } = await fetchTenders({
             maxItems: 15,
             onlyNew: true,
-            seenIds,
+            resolveSourceUrl: true,
+            state: { entries, lastRunAt: null },
             now: NOW,
         });
 
         expect(tenders).toEqual([]);
         // proves it walked page 1 (10) AND on into page 2 (5 more) instead
         // of stopping after page 1 came back fully known
-        expect(allIdsThisRun).toHaveLength(15);
+        expect(observedThisRun).toHaveLength(15);
         // and proves it never spent a request resolving source_url for a
         // record that was going to be filtered out anyway
         const detailCalls = fetchMock.mock.calls.filter(([, init]) => {
@@ -145,7 +216,8 @@ describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures
             maxItems: 10,
             onlyNew: false,
             dateRange: '7d',
-            seenIds: new Set(),
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
             now,
         });
 
@@ -160,7 +232,13 @@ describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures
 // with no uptime guarantee).
 describe.skipIf(process.env.CI)('live fetchTenders against the real Mendoza COMPR.AR portal', () => {
     it('walks multiple real pages and returns well-formed, unique tenders', async () => {
-        const { tenders } = await fetchTenders({ maxItems: 35, onlyNew: false, seenIds: new Set(), now: new Date() });
+        const { tenders } = await fetchTenders({
+            maxItems: 35,
+            onlyNew: false,
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
+            now: new Date(),
+        });
 
         expect(tenders.length).toBeGreaterThan(10); // proves pagination actually advanced past page 1
         expect(tenders.length).toBeLessThanOrEqual(35);
@@ -177,12 +255,24 @@ describe.skipIf(process.env.CI)('live fetchTenders against the real Mendoza COMP
     }, 120_000);
 
     it('respects maxItems as a hard cap even though the real backlog is far larger', async () => {
-        const { tenders } = await fetchTenders({ maxItems: 5, onlyNew: false, seenIds: new Set(), now: new Date() });
+        const { tenders } = await fetchTenders({
+            maxItems: 5,
+            onlyNew: false,
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
+            now: new Date(),
+        });
         expect(tenders.length).toBeLessThanOrEqual(5);
     }, 60_000);
 
-    it('marks every record is_new=true on a cold run (empty seen-set)', async () => {
-        const { tenders } = await fetchTenders({ maxItems: 5, onlyNew: false, seenIds: new Set(), now: new Date() });
+    it('marks every record is_new=true on a cold run (empty state)', async () => {
+        const { tenders } = await fetchTenders({
+            maxItems: 5,
+            onlyNew: false,
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
+            now: new Date(),
+        });
         expect(tenders.every((t) => t.is_new)).toBe(true);
     }, 60_000);
 });

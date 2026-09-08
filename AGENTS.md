@@ -77,6 +77,52 @@ real browser. Verified live before writing any code (2026-09-04):
   kept in as cheap insurance given the two other stateful-postback actors
   in this portfolio both needed it for real.
 
+## Delta engine v2 (2026-09-08)
+
+Supersedes "record_id / event_type choices" below (kept as history - still
+accurate about `record_id` and `scraped_at`, superseded on `event_type`).
+
+**What changed:**
+
+- `src/state.ts`: `DeltaState.entries` is now `Record<numeroProceso, {estado, hash}>`,
+  not a bare `seenIds: string[]`. Both fields come from the grid row this
+  actor already walks every run - free, no extra request. Not backward
+  compatible with the v1 shape (see CHANGELOG.md).
+- `src/fingerprint.ts` (new): sha1 over the grid row's mutable fields
+  (nombreProceso, tipoProceso, fechaApertura, estado, unidadEjecutora,
+  servicioAdministrativoFinanciero, monto).
+- `event_type` is now NEW_LISTING / STATUS_CHANGE (estado differs from
+  last time - e.g. "Pendiente Análisis" -> "Adjudicado", a real domain
+  signal this source's own grid already carries) / UPDATED (same estado,
+  fingerprint differs) / UNCHANGED (full-mode only), instead of a flat
+  default. Both new classifications are free - no extra request - since
+  `estado` and every fingerprinted field are already in the walked row.
+- **No CLOSED event, considered and rejected**: unlike santafe/salta,
+  this source has ~25,784+ total processes. A complete census (the only
+  way CLOSED can be trusted - see salta-compras-monitor's AGENTS.md for
+  why a partial walk can't prove absence) would mean thousands of
+  sequential postbacks - hours, not seconds. Building CLOSED here would
+  mean either lying about completeness on a normal `maxItems`-bounded run,
+  or making a "cheap" delta run silently balloon into an hours-long crawl
+  the moment `onlyNew` is combined with a naive full-census requirement.
+  Neither is acceptable, so this event is simply not offered for Mendoza.
+- **New `resolveSourceUrl` input** (default true): the existing per-row
+  detail postback (~1.5s/row, see "source_url requires one extra request"
+  below) is now optional. Disabling it gives a much faster large-`maxItems`
+  run at the cost of `source_url` falling back to the generic search page
+  for every record - the same degraded-fallback value the code already
+  used for a failed/missing link, now selectable on purpose. Tracked per
+  record via the new `sourceUrlResolved` output field.
+- **Pricing**: two-tier PPE - `result` $0.003 (source_url genuinely
+  resolved this run) / `result-summary` $0.001 (resolveSourceUrl=false, or
+  the postback failed/was missing - same fallback path, same price).
+  `Actor.pushData(record, eventName)` performs the charge itself (verified
+  against the installed SDK's `.d.ts` before writing this, per the
+  double-charge bug caught on salta-compras-monitor during the same pass)
+  - no separate `Actor.charge()` call.
+- `eventTypes` input narrows delta-mode delivery, matching the fleet
+  convention on santafe/tucuman/salta.
+
 ## Delta engine (2026-09-06 retrofit)
 
 Added `onlyNew`/`dateRange` input + the standardized B2B output envelope

@@ -14,8 +14,26 @@
         "onlyNew": {
             "title": "Only new records (delta mode)",
             "type": "boolean",
-            "description": "Persists which numeroProceso ids this actor has already returned, in its own private key-value store that survives between scheduled runs, and keeps only the ones not seen before. IMPORTANT for this source: comprar.mendoza.gov.ar's process listing is sorted by numero de proceso ascending (each organism's own sequential counter, cycling through years) - NOT by date and NOT newest-first. Verified live: a blank-form search's first page mixes processes from 2019 through 2026 rather than showing only the most recent ones. Because of this, onlyNew is a safe POST-FILTER (fetch up to maxItems raw processes exactly as a normal run does, then drop the ones already seen) rather than an early-stop optimization - it does NOT make pagination stop sooner, and it does NOT guarantee a newly created process will appear within a small maxItems window, since its position in the list depends on its own organism's counter, not on when it was published. Raise maxItems to cover more of the backlog if a delta run keeps returning fewer new records than expected. See AGENTS.md for the full live evidence.",
+            "description": "Persists which numeroProceso ids this actor has already returned - and their last-known estado + content fingerprint - in its own private key-value store that survives between scheduled runs, and keeps only the ones that are new, status-changed or amended. IMPORTANT for this source: comprar.mendoza.gov.ar's process listing is sorted by numero de proceso ascending (each organism's own sequential counter, cycling through years) - NOT by date and NOT newest-first. Verified live: a blank-form search's first page mixes processes from 2019 through 2026 rather than showing only the most recent ones. Because of this, onlyNew is a safe POST-FILTER (fetch up to maxItems raw processes exactly as a normal run does, then drop the ones already seen and unchanged) rather than an early-stop optimization - it does NOT make pagination stop sooner, and it does NOT guarantee a newly created process will appear within a small maxItems window, since its position in the list depends on its own organism's counter, not on when it was published. Raise maxItems to cover more of the backlog if a delta run keeps returning fewer new records than expected. See AGENTS.md for the full live evidence.",
             "default": false
+        },
+        "eventTypes": {
+            "title": "Event types to deliver",
+            "type": "array",
+            "description": "Which kinds of change to deliver when 'Only new records' is on (ignored, everything delivered, when it is off). NEW_LISTING = never seen before. STATUS_CHANGE = seen before, estado changed (e.g. Pendiente Analisis -> Adjudicado) - free to detect, no extra request. UPDATED = seen before, same estado, a field changed (monto, fecha, unidad ejecutora...).",
+            "editor": "select",
+            "items": {
+                "type": "string",
+                "enum": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED"],
+                "enumTitles": ["NEW_LISTING - never seen before", "STATUS_CHANGE - estado changed", "UPDATED - a field changed"]
+            },
+            "default": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED"]
+        },
+        "resolveSourceUrl": {
+            "title": "Resolve a direct link per process",
+            "type": "boolean",
+            "description": "When enabled (default), resolves each delivered record's own permalink via one extra postback per row (~1.5s each - a real, measured cost, see AGENTS.md). Disable for a much faster run when you don't need a process-specific link: source_url falls back to the plain search page, and delivery is charged at the cheaper result-summary rate instead of result. See README 'How much does it cost'.",
+            "default": true
         },
         "dateRange": {
             "title": "Filter by opening date",

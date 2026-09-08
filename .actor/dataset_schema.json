@@ -25,7 +25,7 @@
             "event_type": {
                 "title": "Event Type",
                 "type": "string",
-                "description": "NEW_LISTING for every process"
+                "description": "NEW_LISTING (never seen before), STATUS_CHANGE (estado changed since last seen), UPDATED (a field changed, same estado) or UNCHANGED (only when Only new records is off)."
             },
             "scraped_at": {
                 "title": "Scraped At",
@@ -37,10 +37,20 @@
                 "type": "boolean",
                 "description": "true if not seen in a prior run (delta mode)"
             },
+            "contentHash": {
+                "title": "Content Hash",
+                "type": "string",
+                "description": "sha1 fingerprint of this record's changeable fields - used to detect UPDATED between runs."
+            },
+            "sourceUrlResolved": {
+                "title": "Source URL Resolved",
+                "type": "boolean",
+                "description": "True when source_url is a genuine process-specific permalink; false when it's the generic search-page fallback."
+            },
             "source_url": {
                 "title": "Source URL",
                 "type": "string",
-                "description": "Direct, cookie-independent link to the official process page"
+                "description": "Direct, cookie-independent link to the official process page (or the generic search page - see sourceUrlResolved)"
             }
         }
     },
@@ -68,6 +78,25 @@
                     { "label": "Unidad Ejecutora", "format": "text", "field": "unidadEjecutora" },
                     { "label": "Monto", "format": "text", "field": "monto" },
                     { "label": "Nuevo", "format": "boolean", "field": "is_new" }
+                ]
+            }
+        },
+        "changes": {
+            "title": "Status changes & amendments",
+            "transformation": {
+                "fields": ["record_id", "event_type", "nombreProceso", "estado", "unidadEjecutora", "monto", "source_url", "scraped_at"]
+            },
+            "display": {
+                "component": "table",
+                "columns": [
+                    { "label": "Numero", "format": "text", "field": "record_id" },
+                    { "label": "Evento", "format": "text", "field": "event_type" },
+                    { "label": "Nombre", "format": "text", "field": "nombreProceso" },
+                    { "label": "Estado", "format": "text", "field": "estado" },
+                    { "label": "Unidad Ejecutora", "format": "text", "field": "unidadEjecutora" },
+                    { "label": "Monto", "format": "text", "field": "monto" },
+                    { "label": "URL", "format": "link", "field": "source_url" },
+                    { "label": "Detectado", "format": "date", "field": "scraped_at" }
                 ]
             }
         }
