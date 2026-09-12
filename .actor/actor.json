@@ -1,22 +1,25 @@
 {
-    "$schema": "https://apify.com/schemas/v1/actor.ide.json",
-    "actorSpecification": 1,
-    "name": "mendoza-compras-monitor",
-    "title": "Mendoza Tenders Scraper & Monitor",
-    "description": "Extracts public procurement processes (licitaciones, contrataciones directas) from the Province of Mendoza, Argentina's COMPR.AR-based portal, with type, status, organism and budget per process.",
-    "version": "2.0",
-    "buildTag": "latest",
-    "minMemoryMbytes": 256,
-    "maxMemoryMbytes": 512,
-    "meta": {
-        "templateId": "ts-crawlee-cheerio",
-        "generatedBy": "Claude Code with Claude Sonnet 5"
-    },
-    "inputSchema": "./input_schema.json",
-    "outputSchema": "./output_schema.json",
-    "storages": {
-        "dataset": "./dataset_schema.json"
-    },
-    "changelog": "../CHANGELOG.md",
-    "dockerfile": "../Dockerfile"
+  "$schema": "https://apify.com/schemas/v1/actor.ide.json",
+  "actorSpecification": 1,
+  "name": "mendoza-compras-monitor",
+  "title": "Mendoza COMPR.AR Argentina - Tender Delta API",
+  "description": "Extracts licitaciones and contrataciones directas from the Province of Mendoza, Argentina's COMPR.AR procurement portal, with type, status, organism and budget per process. Delta mode flags new listings, status changes and amendments so you stop manually re-checking comprar.mendoza.gov.ar.",
+  "version": "2.0",
+  "buildTag": "latest",
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 512,
+  "meta": {
+    "templateId": "ts-crawlee-cheerio",
+    "generatedBy": "Claude Code with Claude Sonnet 5"
+  },
+  "inputSchema": "./input_schema.json",
+  "outputSchema": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
+  "changelog": "../CHANGELOG.md",
+  "dockerfile": "../Dockerfile",
+  "categories": [
+    "BUSINESS"
+  ]
 }
