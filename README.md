@@ -1,71 +1,175 @@
-# Mendoza Government Tenders Monitor - Argentina Public Procurement (Licitaciones)
+<h1 align="center">Mendoza COMPR.AR Argentina - Tender Delta API</h1>
 
-## Executive Value Proposition
+<p align="center"><strong>Delta-mode monitoring for Mendoza Province's public tenders (licitaciones) and direct-award contracts — no session cookies to babysit, no manual re-checks of comprar.mendoza.gov.ar.</strong></p>
 
-Tracking the Province of Mendoza's procurement register by hand means opening `comprar.mendoza.gov.ar`'s advanced search, working through a session-bound ASP.NET postback flow with no plain links to bookmark, and re-reading a 25,000+ process backlog every time you want to know whether a tracked licitación changed status or its budget was amended. This actor automates that walk and adds two checks the portal never surfaces on its own: an `estado` change (e.g. "Pendiente Análisis" -> "Adjudicado") and a content amendment (`monto`, `fechaApertura`, `unidadEjecutora` or any other tracked field) are both detected from the same row this actor already reads, at no extra request cost. Turn on delta mode (`onlyNew`) for a recurring or scheduled run and each execution reports only what is genuinely new, status-changed or amended - not a re-dump of the whole register.
+<p align="center">
+  <a href="https://apify.com"><img alt="Built for Apify" src="https://img.shields.io/badge/Built%20for-Apify-FF9012?logo=apify&logoColor=white"></a>
+  <img alt="Pay-per-event pricing" src="https://img.shields.io/badge/Pay--Per--Event-from%20%240.001-2ea44f">
+  <img alt="TypeScript" src="https://img.shields.io/badge/-TypeScript-3178C6?logo=typescript&logoColor=white">
+  <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
+</p>
 
-## Who Uses Mendoza Procurement Data
+<p align="center">
+  <a href="https://apify.com/stefano_seggio/mendoza-compras-monitor"><img alt="Run on Apify" src="https://img.shields.io/badge/Run%20on-Apify-FF9012?style=for-the-badge&logo=apify&logoColor=white"></a>
+</p>
 
-- **Suppliers to provincial organisms** (construction, health, IT, general services) tracking their own submitted bids. `estado`, `event_type` (`STATUS_CHANGE`/`UPDATED`) and `monto` tell them the moment a tracked process is adjudicated or its budget changes, so they know when to re-check an offer or stop chasing a closed one.
-- **Bid consultants and gestores managing several client accounts** who need to know what changed across all of their clients' tracked processes since the last run. `event_type`, `unidadEjecutora` and `source_url` let them notify each client with a direct link to the process, instead of re-opening the search form per client.
-- **Journalists, researchers and transparency groups** studying provincial spending patterns. `tipoProceso`, `unidadEjecutora` and `monto` support questions like which organism runs the most Contratación Directa (direct-award, lower-scrutiny) processes versus competitive Licitación Pública processes.
+<p align="center"><sub>Owner console: <a href="https://console.apify.com/actors/bb4cRgt1i27hvr9Ug">console.apify.com/actors/bb4cRgt1i27hvr9Ug</a></sub></p>
 
-## Input
+## What it does
 
-```json
-{ "maxItems": 500, "onlyNew": true }
+`comprar.mendoza.gov.ar` — the Province of Mendoza, Argentina's official public procurement portal — publishes every licitación pública (competitive tender) and contratación directa (direct-award contract) issued by provincial organisms, but only through a session-bound ASP.NET advanced-search form with no plain, bookmarkable listing URLs and no change feed. Checking whether a tracked process changed status means re-running the same search and eyeballing a register of 25,000+ processes by hand.
+
+This Actor walks that register on a schedule and turns it into a proper feed: type, status (`estado`), executing organism (`unidadEjecutora`) and budget (`monto`) per process, plus two checks the portal itself never surfaces — a status change (e.g. "Pendiente Análisis" → "Adjudicado") and a content amendment (budget, opening date, organism, or any other tracked field) — both detected from the same row this Actor already reads, at no extra request cost. Turn on delta mode (`onlyNew`) and every scheduled run reports only what's new, status-changed, or amended, instead of a full re-dump of the register.
+
+It's built for suppliers tracking their own submitted bids, bid consultants and gestores managing several client accounts at once, and journalists or transparency researchers studying which organisms lean on lower-scrutiny Contratación Directa awards versus competitive Licitación Pública.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A["GET comprar.mendoza.gov.ar home page"] --> B["Capture ASP.NET_SessionId + secondary session cookie"]
+    B --> C["POST search-landing form"]
+    C --> D["Paginate Page$N postbacks — 10 rows/page, up to maxItems"]
+    D --> E{"resolveSourceUrl?"}
+    E -->|"true"| F["Per-row detail postback (~1.5s) → process-specific permalink"]
+    E -->|"false"| G["source_url = generic search-page fallback"]
+    F --> H["sha1 contentHash over mutable fields (monto, fecha, estado, unidad...)"]
+    G --> H
+    H --> I{"onlyNew: compare vs key-value store state"}
+    I -->|"never seen"| J["event_type = NEW_LISTING"]
+    I -->|"estado changed"| K["event_type = STATUS_CHANGE"]
+    I -->|"hash changed, same estado"| L["event_type = UPDATED"]
+    I -->|"unchanged"| M["event_type = UNCHANGED (dropped unless onlyNew=false)"]
+    J --> N{"sourceUrlResolved?"}
+    K --> N
+    L --> N
+    N -->|"true"| O["Charge: result — $0.003"]
+    N -->|"false"| P["Charge: result-summary — $0.001"]
+    O --> Q["Push to dataset + update KV-store state"]
+    P --> Q
 ```
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `maxItems` | integer | `100` | Hard cap on RAW processes walked this run (10 per page, 25,000+ total at audit time). `onlyNew`/`dateRange`/`eventTypes` filter on top of this walk, so the number actually returned can be lower. |
-| `onlyNew` | boolean | `false` | Delta mode. Persists which `numeroProceso` ids this actor has already returned - and their last-known `estado` and content fingerprint - in a named key-value store that survives between scheduled runs, then delivers only what's new, status-changed or amended. It is a safe post-filter, not an early-stop optimization: the source's listing is sorted by numero de proceso ascending, not newest-first. |
-| `eventTypes` | array | all three | Which of `NEW_LISTING` / `STATUS_CHANGE` / `UPDATED` to deliver when `onlyNew` is on. |
-| `resolveSourceUrl` | boolean | `true` | Resolves each delivered record's own permalink via one extra postback per row (~1.5s each). Disable for a much faster run when a process-specific link isn't needed; `source_url` then falls back to the plain search page and delivery is billed at the cheaper `result-summary` rate. |
-| `dateRange` | string | (none) | `"24h"` \| `"7d"` \| `"30d"` - filters by `fechaApertura` (scheduled bid-opening date), which is routinely a future date for a currently open tender. `onlyNew` is the more reliable "what's new" signal. |
+Every request in that sequence — the home-page GET, the search-landing POST, each pagination postback, and each per-row detail postback — goes through a shared retry helper with exponential backoff (up to 4 retries, starting at 1 second and doubling). No proxy is required; the portal is reachable from a plain datacenter IP.
 
-## Output
+## Features
 
-```json
-{
-  "numeroProceso": "10201-0001-CDI20",
-  "nombreProceso": "Adquisición de insumos varios",
-  "tipoProceso": "Contratación Directa",
-  "fechaApertura": "15/09/2026 10:00",
-  "estado": "Pendiente Análisis",
-  "unidadEjecutora": "Ministerio de Salud",
-  "servicioAdministrativoFinanciero": "SAF Salud",
-  "monto": "1.250.000,50",
-  "record_id": "10201-0001-CDI20",
-  "event_type": "NEW_LISTING",
-  "contentHash": "3f9a1c2b8e7d4f0a9c6b5d2e1f8a7c4b6d3e9f01",
-  "scraped_at": "2026-09-09T08:00:00.000Z",
-  "is_new": true,
-  "sourceUrlResolved": true,
-  "source_url": "https://comprar.mendoza.gov.ar/PLIEGO/VistaPreviaPliegoCiudadano.aspx?qs=..."
-}
-```
-
-`record_id` is `numeroProceso` verbatim - already the domain's own unique id, stable across runs. `event_type` is `NEW_LISTING` (never seen before), `STATUS_CHANGE` (`estado` changed since last seen), `UPDATED` (a tracked field changed, same `estado`) or `UNCHANGED` (only appears with `onlyNew` off). `monto` is left as the source's raw Argentine comma-decimal string rather than parsed into a number, to avoid a silent reformatting error. The dataset ships two built-in views: an overview table and a "Status changes & amendments" table pre-filtered to the change-relevant fields.
-
-## Reliability
-
-Every HTTP request in the session - the initial home-page GET, the search-landing POST, each `Page$N` pagination POST, and each per-row detail postback used to resolve `source_url` - goes through a shared retry helper with exponential backoff: up to 4 retries, starting at a 1-second delay and doubling each attempt. The site's session state (`ASP.NET_SessionId` plus a second opaque cookie the server also sets) is captured from response headers and forwarded on every request, since the whole search flow depends on that session staying valid across the sequence. No proxy is required - the portal is reachable from a plain datacenter IP.
-
-Status-change and amendment detection reuse data already collected in the same page walk: `STATUS_CHANGE` compares the row's current `estado` against the last-seen value, and `UPDATED` compares a sha1 fingerprint computed over the row's own mutable fields (`nombreProceso`, `tipoProceso`, `fechaApertura`, `estado`, `unidadEjecutora`, `servicioAdministrativoFinanciero`, `monto`) - neither check costs an extra request. If a row's link markup is missing, or its detail postback fails after the retry policy above is exhausted, `source_url` falls back to the plain search page URL rather than dropping the record or leaving the field empty; `sourceUrlResolved: false` discloses that the value is a fallback, not a genuine permalink. Cross-run state (`onlyNew`'s seen-set of `numeroProceso` -> `{estado, hash}`) is persisted in a named key-value store, independent of any single run's own storage, capped at 2,000 entries with the current run's own discoveries kept first so they're never evicted by the cap.
-
-## Pricing
-
-Pay-per-event, two tiers, platform usage included:
-
-| Event | Price | When |
+| Feature | Input field | What it does |
 | --- | --- | --- |
-| `result` | $0.003 per record | `source_url` was genuinely resolved this run (default `resolveSourceUrl: true`) |
-| `result-summary` | $0.001 per record | `resolveSourceUrl: false`, or the per-row postback failed or was missing |
-| Actor start | $0.00005 | Once per run |
+| Delta mode | `onlyNew` | Persists each `numeroProceso`'s last-known `estado` and content fingerprint in a named key-value store that survives between scheduled runs, then delivers only new, status-changed or amended records. |
+| Status-change detection | `eventTypes` (`STATUS_CHANGE`) | Flags a process whose `estado` changed since it was last seen — free to detect, reused from the same grid row already walked. |
+| Content-amendment detection | `eventTypes` (`UPDATED`) | Flags a process whose `monto`, `fechaApertura`, `unidadEjecutora` or other tracked field changed while `estado` stayed the same, via a sha1 `contentHash`. |
+| Event-type filtering | `eventTypes` | Narrows delta-mode delivery to any subset of `NEW_LISTING` / `STATUS_CHANGE` / `UPDATED`. |
+| Per-process permalink resolution | `resolveSourceUrl` | Resolves a process-specific link via one extra postback per row; disabling it trades the specific link for a faster, cheaper run. |
+| Opening-date filter | `dateRange` | Filters the raw walk to processes whose `fechaApertura` (scheduled bid-opening date) falls in the last 24h / 7d / 30d. |
+| Configurable walk size | `maxItems` | Hard cap on raw processes walked per run (10 rows/page against a 25,000+ process register at audit time). |
+| Resilient session handling | — | Captures and forwards `ASP.NET_SessionId` and a second opaque session cookie across the whole postback sequence, with exponential-backoff retries on every request. |
 
-A daily monitor finding 5 changes with `resolveSourceUrl: true` costs about $0.02/day (~$0.45/month). A `resolveSourceUrl: false` monitor over a larger `maxItems` window is cheaper still and runs faster, at the cost of getting the generic search-page link instead of a process-specific permalink.
+## Quick start
 
-## Support & Enterprise SLA
+```bash
+apify call stefano_seggio/mendoza-compras-monitor --input '{
+  "maxItems": 500,
+  "onlyNew": true,
+  "eventTypes": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED"],
+  "resolveSourceUrl": true
+}'
+```
 
-This actor is built and maintained by an independent developer, not a staffed vendor team - there is no dedicated support desk or contractual uptime SLA on offer. Questions, bugs, or requests to expose more of the advanced search form's filters (date range, organism, process type) as actor input are handled through the Apify Store's Issues tab and are typically addressed within about 48 hours.
+This walks up to 500 raw processes, keeps only records that are new, status-changed or amended since the last run, and resolves a process-specific permalink for each one delivered.
+
+## Pricing (Pay-Per-Event)
+
+| Event | Price | Charged when |
+| --- | --- | --- |
+| `result` | $0.003 per record | A delivered record's `source_url` was genuinely resolved this run (default `resolveSourceUrl: true`). |
+| `result-summary` | $0.001 per record | `resolveSourceUrl` was disabled, or the per-row permalink postback failed — `source_url` falls back to the generic search page. |
+
+Nothing is charged for rows the raw walk reads but doesn't deliver — `onlyNew`, `eventTypes` and `dateRange` are all free post-filters on top of the same walk, so a delta run that finds nothing new that day costs only its per-run start fee. A daily monitor finding 5 changes with `resolveSourceUrl: true` runs about $0.02/day (~$0.45/month); disabling permalink resolution over a larger `maxItems` window is cheaper and faster still, at the cost of a generic link instead of a process-specific one.
+
+## Why not just scrape it yourself
+
+- **Zero infrastructure** — no session-handling code, no scheduler process, no server to keep alive; the Actor runs on Apify's platform on the schedule you set.
+- **Managed scheduling** — set it once as an Apify scheduled task and every run picks up exactly where the last one left off via the persisted delta state.
+- **No proxy or session babysitting** — the ASP.NET session cookie pair and postback sequencing that `comprar.mendoza.gov.ar` requires are already handled request-by-request, with backoff retries built in.
+- **Built-in change detection** — `STATUS_CHANGE` and `UPDATED` are computed from data already collected in the same page walk, at no extra request or cost, instead of you diffing raw HTML across runs yourself.
+
+## Known limitations
+
+- **`onlyNew` is a post-filter, not an early-stop.** The portal's listing is sorted by número de proceso ascending (each organism's own sequential counter cycling through years), not by date or newest-first — verified live, a blank-form search's first page mixes processes from 2019 through 2026. Delta mode still walks up to `maxItems` raw processes every run before filtering; it does not guarantee a newly created process appears within a small `maxItems` window.
+- **No `CLOSED` event.** Detecting that a previously-seen process disappeared from the register would require a complete census of all 25,000+ processes — unlike smaller provincial registers, that would take thousands of sequential postbacks per run. This was considered and explicitly not built.
+- **The advanced search form's own filters (organism, process type) aren't exposed as input yet** — only `dateRange` (by opening date) and the raw `maxItems` walk are. Broader filter support is tracked as a Store Issues request.
+- **`monto` ships as the source's raw comma-decimal string**, not parsed into a number, to avoid a silent reformatting error on Argentine number formatting.
+- **No contractual support SLA.** This Actor is built and maintained by an independent developer; bug reports and filter requests go through the Apify Store's Issues tab and are typically addressed within about 48 hours.
+
+## Node.js
+
+```js
+// run-monitor.js
+// Calls the Mendoza Tender Delta Actor via the Apify API and logs new/changed tender records.
+const { ApifyClient } = require('apify-client');
+
+const client = new ApifyClient({
+    token: process.env.APIFY_TOKEN, // set this to your Apify API token
+});
+
+async function main() {
+    const input = {
+        maxItems: 500,
+        onlyNew: true,
+        eventTypes: ['NEW_LISTING', 'STATUS_CHANGE', 'UPDATED'],
+        resolveSourceUrl: true,
+    };
+
+    // Starts the run and waits for it to finish
+    const run = await client.actor('bb4cRgt1i27hvr9Ug').call(input);
+    console.log(`Run ${run.id} finished with status: ${run.status}`);
+
+    // Fetch the delivered tender records for this run
+    const { items } = await client.dataset(run.defaultDatasetId).listItems();
+    console.log(`Delivered ${items.length} tender record(s):`);
+    for (const item of items) {
+        console.log(`- [${item.event_type}] ${item.numeroProceso}: ${item.nombreProceso} (${item.estado})`);
+    }
+}
+
+main().catch((err) => {
+    console.error('Run failed:', err);
+    process.exit(1);
+});
+```
+
+## Python
+
+```python
+# run_monitor.py
+# Calls the Mendoza Tender Delta Actor via the Apify API and logs new/changed tender records.
+import os
+from apify_client import ApifyClient
+
+client = ApifyClient(os.environ["APIFY_TOKEN"])  # set this to your Apify API token
+
+run_input = {
+    "maxItems": 500,
+    "onlyNew": True,
+    "eventTypes": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED"],
+    "resolveSourceUrl": True,
+}
+
+# Starts the run and waits for it to finish
+run = client.actor("bb4cRgt1i27hvr9Ug").call(run_input=run_input)
+print(f"Run {run['id']} finished with status: {run['status']}")
+
+# Fetch the delivered tender records for this run
+dataset_items = client.dataset(run["defaultDatasetId"]).list_items().items
+print(f"Delivered {len(dataset_items)} tender record(s):")
+for item in dataset_items:
+    print(f"- [{item['event_type']}] {item['numeroProceso']}: {item['nombreProceso']} ({item['estado']})")
+```
+
+---
+
+<p align="center">
+Part of <strong>Delta Registry</strong> — pay-per-event regulatory &amp; compliance data infrastructure.<br>
+For professional inquiries or enterprise licensing: <a href="https://www.linkedin.com/in/stefanoseggio-deltaregistry">linkedin.com/in/stefanoseggio-deltaregistry</a><br>
+The rest of the fleet: <a href="https://github.com/stefanoseggio">github.com/stefanoseggio</a>
+</p>
