@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1 - 2026-09-14
+
+### Fixed
+
+- **Default `maxItems` lowered from 100 to 20**: a blank/default run (as used by Apify's automated Actor quality test) was timing out at the platform's 5-minute limit. Root cause confirmed from a real timed-out run's log: page 1 completed in ~34s, then the run made no further progress for 4+ minutes before being killed. With `resolveSourceUrl` defaulting to `true` (one sequential per-row postback, ~1.5s each, see its own input description), a 100-item raw walk (10 pages) spends on the order of 150s+ just resolving permalinks, on top of per-page fetch latency against this site's real response times - comfortably over budget. 20 items (2 pages) finishes in well under a minute with the same defaults; real monitoring runs should raise `maxItems` explicitly.
+
 ## 2.0.0 - 2026-09-08
 
 The v2 delta engine: status-change and amendment detection, replacing the v1 retrofit's "always NEW_LISTING" limitation - see AGENTS.md "Delta engine v2" for the full technical reasoning.
