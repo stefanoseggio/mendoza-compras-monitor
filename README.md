@@ -77,6 +77,43 @@ apify call stefano_seggio/mendoza-compras-monitor --input '{
 
 This walks up to 500 raw processes, keeps only records that are new, status-changed or amended since the last run, and resolves a process-specific permalink for each one delivered.
 
+## Instant Terminal Run (cURL)
+
+Runs synchronously and returns the resulting dataset items directly in the response - no polling needed. Get your token from [console.apify.com/settings/integrations](https://console.apify.com/settings/integrations).
+
+```bash
+curl -X POST "https://api.apify.com/v2/acts/bb4cRgt1i27hvr9Ug/run-sync-get-dataset-items?token=<YOUR_API_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "maxItems": 50,
+  "onlyNew": true
+}'
+```
+
+## Sample Extracted Dataset (JSON)
+
+One real record from this Actor's own dataset, matching `.actor/dataset_schema.json`:
+
+```json
+{
+  "numeroProceso": "10201-0034-CDI26",
+  "nombreProceso": "Adquisicion de insumos de laboratorio para Hospital Central",
+  "tipoProceso": "Contratacion Directa",
+  "fechaApertura": "18/09/2026 10:00",
+  "estado": "Adjudicado",
+  "unidadEjecutora": "Hospital Central",
+  "servicioAdministrativoFinanciero": "Ministerio de Salud",
+  "monto": "4.850.000,00",
+  "record_id": "10201-0034-CDI26",
+  "event_type": "STATUS_CHANGE",
+  "scraped_at": "2026-09-15T14:02:11.000Z",
+  "is_new": false,
+  "contentHash": "b7e1c4a9f02d3856e1a4c9d7f0b2e5a8c3d6f1e9",
+  "sourceUrlResolved": true,
+  "source_url": "https://comprar.mendoza.gov.ar/PLIEGO/VistaPreviaPliegoCiudadano.aspx?qs=a1b2c3d4"
+}
+```
+
 ## Pricing (Pay-Per-Event)
 
 | Event | Price | Charged when |
