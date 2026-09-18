@@ -176,6 +176,67 @@ main().catch((err) => {
 
 A full, runnable copy of this script lives at [`examples/run-monitor.js`](./examples/run-monitor.js).
 
+## Use this from Claude Desktop, Cursor, or Windsurf (via MCP)
+
+This Actor is also reachable as a scoped MCP tool through Apify's own hosted `@apify/actors-mcp-server` at `https://mcp.apify.com`. The `?tools=` query string below scopes the connection to just **this one actor** (`stefano_seggio/mendoza-compras-monitor`) — not the full Delta Registry fleet. For the full 28-actor closed-scope configuration, see [`MCP_INTEGRATION.md`](https://github.com/stefanoseggio/delta-registry-website/blob/main/MCP_INTEGRATION.md) in the `delta-registry-website` repo.
+
+### Claude Desktop
+
+Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS). Claude Desktop connects through the `mcp-remote` stdio bridge, not a direct URL — and `mcp-remote` does **not** expand shell environment variables inside the JSON string, so paste your real token as a literal value below and keep this file out of version control:
+
+```json
+{
+  "mcpServers": {
+    "delta-registry-mendoza-compras-monitor": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.apify.com/?tools=stefano_seggio/mendoza-compras-monitor",
+        "--header",
+        "Authorization: Bearer ${APIFY_TOKEN}"
+      ]
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `.cursor/mcp.json` (project-scoped) or `~/.cursor/mcp.json` (global). Cursor uses native HTTP transport:
+
+```json
+{
+  "mcpServers": {
+    "delta-registry-mendoza-compras-monitor": {
+      "url": "https://mcp.apify.com/?tools=stefano_seggio/mendoza-compras-monitor",
+      "headers": {
+        "Authorization": "Bearer ${APIFY_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### Windsurf
+
+Add to `~/.codeium/windsurf/mcp_config.json`. Windsurf uses `serverUrl`, not `url` — and its `${env:...}` syntax genuinely does resolve from the environment (unlike Claude Desktop's `mcp-remote` bridge above):
+
+```json
+{
+  "mcpServers": {
+    "delta-registry-mendoza-compras-monitor": {
+      "serverUrl": "https://mcp.apify.com/?tools=stefano_seggio/mendoza-compras-monitor",
+      "headers": {
+        "Authorization": "Bearer ${env:APIFY_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+In every config above, replace `${APIFY_TOKEN}` (Claude Desktop, Cursor) or set the `APIFY_TOKEN` environment variable (Windsurf's `${env:APIFY_TOKEN}`) with a real token from [Apify Console → Settings → Integrations](https://console.apify.com/settings/integrations).
+
 ## Input & Output Schema
 
 ### Input
