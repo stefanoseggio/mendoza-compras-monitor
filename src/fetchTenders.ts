@@ -56,7 +56,30 @@ interface FetchOptions {
     cookie: string | null;
 }
 
-async function requestWithRetry(options: FetchOptions, maxRetries = 4, baseDelayMs = 1000): Promise<Response> {
+class HttpError extends Error {
+    constructor(public readonly status: number) {
+        super(`HTTP ${status}`);
+        this.name = 'HttpError';
+    }
+}
+
+function isRetriableStatus(status: number): boolean {
+    return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+// Per-attempt timeout of 30s, well under the actor's 600s defaultRunOptions.timeoutSecs:
+// worst case for one call is maxRetries+1 attempts x 30s (150s) plus capped exponential
+// backoff between them (1+2+4+8s = 15s), ~165s total - a comfortable ~2.7x margin under
+// the 600s ceiling, versus the previous unbounded (no AbortSignal) request that could
+// hang indefinitely and consume the whole run timeout on a single stuck socket. Retries
+// are now also restricted to retryable outcomes (408/425/429/5xx/network errors) instead
+// of retrying every non-2xx status, matching santafe-compras-monitor's src/http.ts pattern.
+async function requestWithRetry(
+    options: FetchOptions,
+    maxRetries = 4,
+    baseDelayMs = 1000,
+    timeoutMs = 30_000,
+): Promise<Response> {
     let lastError: Error = new Error('unreachable');
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
@@ -68,14 +91,18 @@ async function requestWithRetry(options: FetchOptions, maxRetries = 4, baseDelay
                 headers,
                 body: options.body,
                 redirect: 'follow',
+                signal: AbortSignal.timeout(timeoutMs),
             });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return response;
+            if (response.ok) return response;
+            if (!isRetriableStatus(response.status)) throw new HttpError(response.status);
+            lastError = new HttpError(response.status);
         } catch (error) {
+            if (error instanceof HttpError && !isRetriableStatus(error.status)) throw error;
             lastError = error instanceof Error ? error : new Error(String(error));
-            if (attempt < maxRetries) {
-                await sleep(baseDelayMs * 2 ** attempt);
-            }
+        }
+        if (attempt < maxRetries) {
+            const delay = Math.min(baseDelayMs * 2 ** attempt, 15_000) + Math.floor(Math.random() * 250);
+            await sleep(delay);
         }
     }
     throw lastError;
