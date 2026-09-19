@@ -6,7 +6,7 @@ from apify_client import ApifyClient
 client = ApifyClient(os.environ["APIFY_TOKEN"])  # set this to your Apify API token
 
 run_input = {
-    "maxItems": 500,
+    "maxItems": 250,
     "onlyNew": True,
     "eventTypes": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED"],
     "resolveSourceUrl": True,

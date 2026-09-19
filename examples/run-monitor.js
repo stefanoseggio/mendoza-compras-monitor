@@ -8,7 +8,7 @@ const client = new ApifyClient({
 
 async function main() {
     const input = {
-        maxItems: 500,
+        maxItems: 250,
         onlyNew: true,
         eventTypes: ['NEW_LISTING', 'STATUS_CHANGE', 'UPDATED'],
         resolveSourceUrl: true,

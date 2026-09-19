@@ -85,14 +85,14 @@ Also runnable from the [Apify Console](https://console.apify.com/actors/bb4cRgt1
 
 ```bash
 apify call stefano_seggio/mendoza-compras-monitor --input '{
-  "maxItems": 500,
+  "maxItems": 250,
   "onlyNew": true,
   "eventTypes": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED"],
   "resolveSourceUrl": true
 }'
 ```
 
-This walks up to 500 raw processes, keeps only records that are new, status-changed or amended since the last run, and resolves a process-specific permalink for each one delivered.
+This walks up to 250 raw processes, keeps only records that are new, status-changed or amended since the last run, and resolves a process-specific permalink for each one delivered. (`maxItems` is capped at 280 - see the parameters table below for why.)
 
 ### cURL (instant terminal run)
 
@@ -118,7 +118,7 @@ from apify_client import ApifyClient
 client = ApifyClient(os.environ["APIFY_TOKEN"])  # set this to your Apify API token
 
 run_input = {
-    "maxItems": 500,
+    "maxItems": 250,
     "onlyNew": True,
     "eventTypes": ["NEW_LISTING", "STATUS_CHANGE", "UPDATED"],
     "resolveSourceUrl": True,
@@ -150,7 +150,7 @@ const client = new ApifyClient({
 
 async function main() {
     const input = {
-        maxItems: 500,
+        maxItems: 250,
         onlyNew: true,
         eventTypes: ['NEW_LISTING', 'STATUS_CHANGE', 'UPDATED'],
         resolveSourceUrl: true,
@@ -245,7 +245,7 @@ Field definitions come straight from [`.actor/input_schema.json`](./.actor/input
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `maxItems` | integer | `20` | Hard cap on the number of RAW processes walked this run (10 per page, 25,000+ total at audit time). `onlyNew`/`dateRange` are post-filters on top of this raw walk, so delivered records can be fewer than `maxItems`. Kept low by default because `resolveSourceUrl`'s per-row postback (~1.5s each) makes a large blank run take several minutes; raise it for a real monitoring run. |
+| `maxItems` | integer | `20` (max `280`) | Hard cap on the number of RAW processes walked this run (10 per page, 25,000+ total at audit time). `onlyNew`/`dateRange` are post-filters on top of this raw walk, so delivered records can be fewer than `maxItems`. Kept low by default because `resolveSourceUrl`'s per-row postback (~1.5s each) makes a large blank run take several minutes; raise it for a real monitoring run. Capped at 280 because this Actor's run timeout is 600s and 280 rows x ~1.5s/row is the largest walk that still fits inside 70% of that budget - see AGENTS.md "Timeout budget" for the arithmetic. |
 | `onlyNew` | boolean | `false` | Delta mode - see Reliability below. The portal's listing is sorted by número de proceso ascending, not by date, so this is a post-filter, not an early stop. |
 | `eventTypes` | string[] | `["NEW_LISTING", "STATUS_CHANGE", "UPDATED"]` | Which kinds of change to deliver when `onlyNew` is on (ignored, everything delivered, when it's off). `NEW_LISTING` = never seen before. `STATUS_CHANGE` = `estado` changed. `UPDATED` = a field changed, same `estado`. |
 | `resolveSourceUrl` | boolean | `true` | Resolves each delivered record's own permalink via one extra postback per row (~1.5s each). Disable for a faster run: `source_url` falls back to the plain search page, billed at the cheaper `result-summary` rate. |

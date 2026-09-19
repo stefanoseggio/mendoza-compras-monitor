@@ -207,6 +207,74 @@ describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures
         expect(detailCalls).toHaveLength(0);
     });
 
+    it('timeout-budget fix: onTender fires as each record is found, not batched after the whole walk finishes', async () => {
+        const callOrder: string[] = [];
+        const { tenders } = await fetchTenders({
+            maxItems: 3,
+            onlyNew: false,
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
+            now: NOW,
+            onTender: async (tender) => {
+                // If this ever ran only after the full walk, callOrder would already equal
+                // `tenders`'s final length by the time the FIRST call arrived - it doesn't,
+                // because this executes live, one row at a time, mid-walk.
+                callOrder.push(tender.numeroProceso);
+                return { stop: false };
+            },
+        });
+
+        expect(callOrder).toEqual(tenders.map((t) => t.numeroProceso));
+        expect(callOrder).toHaveLength(3);
+    });
+
+    it('timeout-budget fix: onTender returning { stop: true } halts the walk immediately - no further rows or pages are fetched', async () => {
+        const fetchMock = mockFetchSequence();
+        const seen: string[] = [];
+
+        const { tenders, observedThisRun } = await fetchTenders({
+            maxItems: 15, // would otherwise walk into page 2 (see the "safe post-filter" test above)
+            onlyNew: false,
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
+            now: NOW,
+            onTender: async (tender) => {
+                seen.push(tender.numeroProceso);
+                return { stop: seen.length >= 2 }; // stop right after the 2nd record, like a charge-limit hit
+            },
+        });
+
+        expect(tenders).toHaveLength(2);
+        expect(observedThisRun).toHaveLength(2);
+        // proves pagination never continued to page 2 once the stop signal came back
+        const page2Calls = fetchMock.mock.calls.filter(([, init]) => {
+            const body = typeof (init as RequestInit | undefined)?.body === 'string' ? ((init as RequestInit).body as string) : '';
+            return new URLSearchParams(body).get('__EVENTARGUMENT') === 'Page$2';
+        });
+        expect(page2Calls).toHaveLength(0);
+    });
+
+    it('timeout-budget fix: onCheckpoint fires after each completed page with the running observedThisRun snapshot', async () => {
+        const checkpoints: number[] = [];
+
+        const { observedThisRun } = await fetchTenders({
+            maxItems: 15, // page 1 (10 rows) + 5 rows into page 2 -> 2 checkpoints
+            onlyNew: false,
+            resolveSourceUrl: true,
+            state: EMPTY_STATE,
+            now: NOW,
+            onCheckpoint: async (observedSoFar) => {
+                checkpoints.push(observedSoFar.length);
+            },
+        });
+
+        // one checkpoint after page 1 (10 observed), one after page 2 (15 observed) - each
+        // checkpoint's snapshot is cumulative, so a timeout right after either one would still
+        // persist everything genuinely walked up to that point, not just the last push.
+        expect(checkpoints).toEqual([10, 15]);
+        expect(observedThisRun).toHaveLength(15);
+    });
+
     it('dateRange filtering excludes processes whose Fecha de apertura falls outside the window', async () => {
         // Page 1's rows span 2019-2026; picking `now` just after the one
         // 2026 row's opening date isolates exactly one match.
