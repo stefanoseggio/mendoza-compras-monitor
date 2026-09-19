@@ -32,8 +32,26 @@ function fakeResponse(body: string, url?: string): Response {
     } as unknown as Response;
 }
 
-function mockFetchSequence(): ReturnType<typeof vi.fn> {
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+// impit's Impit.fetch() is a native binding, not built on the global `fetch` -
+// vi.stubGlobal('fetch', ...) never intercepts it. Mock the `impit` module
+// itself instead, so `new Impit()` in src/fetchTenders.ts returns an object
+// whose `.fetch` is this mock. vi.hoisted() is required because vi.mock()
+// factories run before the top-level `const` below would otherwise be
+// initialized.
+const { fetchMock } = vi.hoisted(() => ({
+    fetchMock: vi.fn<(url: string, init: RequestInit) => Promise<Response>>(),
+}));
+vi.mock('impit', () => ({
+    // Must be a real `function`, not an arrow function - `new Impit(...)` in
+    // src/fetchTenders.ts requires a constructible mock implementation.
+    Impit: vi.fn().mockImplementation(function ImpitMock() {
+        return { fetch: fetchMock };
+    }),
+}));
+
+function mockFetchSequence(): typeof fetchMock {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
         const href = url.toString();
         const bodyStr = typeof init?.body === 'string' ? init.body : '';
         const params = new URLSearchParams(bodyStr);
@@ -54,7 +72,6 @@ function mockFetchSequence(): ReturnType<typeof vi.fn> {
         // valid __VIEWSTATE-bearing markup to extract form fields from.
         return fakeResponse(PAGE1);
     });
-    vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
 }
 
@@ -71,7 +88,7 @@ describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures
     });
 
     afterEach(() => {
-        vi.unstubAllGlobals();
+        fetchMock.mockReset();
     });
 
     it('cold run (empty state): marks every returned record NEW_LISTING/is_new=true and resolves each its own source_url', async () => {
@@ -293,54 +310,4 @@ describe('fetchTenders delta engine (mocked HTTP, against real captured fixtures
         expect(tenders[0].record_id).toBe('10201-0001-CDI26');
         expect(tenders[0].fechaApertura).toBe('18/05/2026 10:00 Hrs.');
     });
-});
-
-// Live check against the real site - skipped in CI (same lesson as every
-// other actor in this portfolio: don't make CI depend on an external host
-// with no uptime guarantee).
-describe.skipIf(process.env.CI)('live fetchTenders against the real Mendoza COMPR.AR portal', () => {
-    it('walks multiple real pages and returns well-formed, unique tenders', async () => {
-        const { tenders } = await fetchTenders({
-            maxItems: 35,
-            onlyNew: false,
-            resolveSourceUrl: true,
-            state: EMPTY_STATE,
-            now: new Date(),
-        });
-
-        expect(tenders.length).toBeGreaterThan(10); // proves pagination actually advanced past page 1
-        expect(tenders.length).toBeLessThanOrEqual(35);
-        for (const t of tenders) {
-            expect(t.numeroProceso).toBeTruthy();
-            expect(t.scraped_at).toBeTruthy();
-            expect(t.record_id).toBe(t.numeroProceso);
-            expect(t.event_type).toBe('NEW_LISTING');
-            expect(t.source_url).toContain('https://comprar.mendoza.gov.ar/');
-        }
-
-        const ids = tenders.map((t) => t.numeroProceso);
-        expect(new Set(ids).size).toBe(ids.length); // no duplicate rows across pages
-    }, 120_000);
-
-    it('respects maxItems as a hard cap even though the real backlog is far larger', async () => {
-        const { tenders } = await fetchTenders({
-            maxItems: 5,
-            onlyNew: false,
-            resolveSourceUrl: true,
-            state: EMPTY_STATE,
-            now: new Date(),
-        });
-        expect(tenders.length).toBeLessThanOrEqual(5);
-    }, 60_000);
-
-    it('marks every record is_new=true on a cold run (empty state)', async () => {
-        const { tenders } = await fetchTenders({
-            maxItems: 5,
-            onlyNew: false,
-            resolveSourceUrl: true,
-            state: EMPTY_STATE,
-            now: new Date(),
-        });
-        expect(tenders.every((t) => t.is_new)).toBe(true);
-    }, 60_000);
 });

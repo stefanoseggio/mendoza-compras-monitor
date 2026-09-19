@@ -1,6 +1,7 @@
 import { log } from 'apify';
 import type { CheerioAPI } from 'cheerio';
 import * as cheerio from 'cheerio';
+import { Impit, type ImpitResponse } from 'impit';
 
 import { type DateRangePreset, isWithinDateRange, parseFechaApertura } from './dateFilter.js';
 import { fingerprintOf } from './fingerprint.js';
@@ -11,6 +12,12 @@ import type { EventType, ParsedTenderRow, TenderRow } from './types.js';
 
 const HOME_URL = 'https://comprar.mendoza.gov.ar/';
 const SEARCH_URL = 'https://comprar.mendoza.gov.ar/BuscarAvanzado2.aspx';
+
+// One Impit instance per actor run: it holds the connection pool and TLS
+// session cache, and gives every request a real, internally-consistent
+// Chrome TLS/HTTP2 fingerprint instead of Node's native (and distinctively
+// bot-shaped) one - see AGENTS.md for why this was added.
+const impit = new Impit({ browser: 'chrome' });
 
 const HOME_SEARCH_BUTTON = 'ctl00$CPH1$CtrlBusquedasHome$btnBusquedaProcesos';
 const LISTAR_BUTTON = 'ctl00$CPH1$btnListarPliegoAvanzado';
@@ -29,7 +36,7 @@ async function sleep(ms: number): Promise<void> {
     });
 }
 
-function extractCookieHeader(response: Response, existing: string | null): string | null {
+function extractCookieHeader(response: { headers: Headers }, existing: string | null): string | null {
     const setCookies = response.headers.getSetCookie?.() ?? [];
     if (setCookies.length === 0) return existing;
     const jar = new Map<string, string>();
@@ -79,14 +86,14 @@ async function requestWithRetry(
     maxRetries = 4,
     baseDelayMs = 1000,
     timeoutMs = 30_000,
-): Promise<Response> {
+): Promise<ImpitResponse> {
     let lastError: Error = new Error('unreachable');
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             const headers: Record<string, string> = {};
             if (options.cookie) headers.Cookie = options.cookie;
             if (options.body) headers['Content-Type'] = 'application/x-www-form-urlencoded';
-            const response = await fetch(options.url, {
+            const response = await impit.fetch(options.url, {
                 method: options.method ?? 'GET',
                 headers,
                 body: options.body,
@@ -304,7 +311,7 @@ export async function fetchTenders(options: FetchTendersOptions): Promise<FetchT
 
     for (let pageNum = 2; pageNum <= MAX_PAGES_SAFETY_CAP && rawIds.size < maxItems && !stopRequested; pageNum++) {
         const pagePayload = buildPostbackPayload($, GRID_TARGET, `Page$${pageNum}`);
-        let response: Response;
+        let response: ImpitResponse;
         try {
             response = await requestWithRetry({
                 url: SEARCH_URL,

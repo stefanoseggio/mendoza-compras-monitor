@@ -77,6 +77,48 @@ real browser. Verified live before writing any code (2026-09-04):
   kept in as cheap insurance given the two other stateful-postback actors
   in this portfolio both needed it for real.
 
+## HTTP transport: `impit`, not the native `fetch`
+
+`src/fetchTenders.ts` makes requests via a module-level `Impit` instance
+(`new Impit({ browser: 'chrome' })`, from the `impit` package), not the
+global `fetch`. This gives every request a real, internally-consistent
+Chrome TLS/HTTP2 fingerprint instead of Node's native one - added
+2026-09-19 as part of the same fleet-wide TLS-fingerprint-hardening pass as
+`florida-tenders-monitor` and `australia-grantconnect-monitor` (Node's own
+`fetch` is not itself deprecated; this is proactive hardening, not a bug
+fix). `requestWithRetry`'s return type is `ImpitResponse` (imported from
+`impit`), not the DOM `Response`, and `extractCookieHeader`'s parameter was
+loosened to the minimal structural type `{ headers: Headers }` it actually
+reads - both needed real changes, not `as any`, once the return type
+stopped being the native `Response`. Two things to know if you touch this
+file again:
+- **`Impit.fetch()` is a native binding, not built on the global `fetch`.**
+  `vi.stubGlobal('fetch', ...)` will NOT intercept it - it does nothing and
+  the real network call goes out, which is exactly what this migration
+  found: the old `mockFetchSequence()` in `test/fetchTenders.test.ts` used
+  `vi.stubGlobal('fetch', fetchMock)`, which would have silently stopped
+  intercepting anything the moment the call site switched to
+  `impit.fetch()`. Fixed by mocking the `impit` module itself instead
+  (`vi.mock('impit', ...)`, with `vi.hoisted()` for the mock function
+  reference, and a real `function` - not an arrow function - as the mock's
+  `Impit` implementation, since `new Impit(...)` requires a constructible
+  mock). Keep that pattern if `test/fetchTenders.test.ts` is extended.
+- **`vi.mock('impit', ...)` is hoisted for the WHOLE file it's declared
+  in** - it cannot be scoped to just one `describe` block the way
+  `vi.stubGlobal`/`vi.unstubAllGlobals` could. This actor's live checks
+  used to live in a `describe.skipIf(process.env.CI)` block at the bottom
+  of `test/fetchTenders.test.ts` itself; once the `impit` mock was added to
+  that file, the live tests silently got the mocked `Impit` too and every
+  call resolved to `undefined` instead of a real response (verified live
+  2026-09-19 - `TypeError: Cannot read properties of undefined (reading
+  'ok')` on every live test, ~15s each from exhausting the retry/backoff
+  loop against nothing). Fixed by moving the live checks to their own file,
+  `test/live.test.ts` (matching the fleet convention already used by
+  `florida-tenders-monitor`/`australia-grantconnect-monitor` for the same
+  reason: separate test files get separate module registries, so
+  `live.test.ts`'s `Impit` import is the real, unmocked package). Do not
+  move live network checks back into a file that mocks `impit`.
+
 ## Delta engine v2 (2026-09-08)
 
 Supersedes "record_id / event_type choices" below (kept as history - still
