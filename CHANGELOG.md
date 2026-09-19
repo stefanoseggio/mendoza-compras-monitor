@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.0.0](https://github.com/stefanoseggio/mendoza-compras-monitor/compare/mendoza-compras-monitor-v2.0.1...mendoza-compras-monitor-v3.0.0) (2026-09-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* v2.0 delta engine - STATUS_CHANGE/UPDATED for free, optional source_url resolution
+
+### Features
+
+* delta engine (onlyNew/dateRange) + standardized B2B output envelope ([5d67cfe](https://github.com/stefanoseggio/mendoza-compras-monitor/commit/5d67cfea1e8dc9d96b73000b0fda4763326ffd9b))
+* Mendoza Compras Monitor - COMPR.AR classic GridView, direct page jumps ([060cdf6](https://github.com/stefanoseggio/mendoza-compras-monitor/commit/060cdf6936e77cd77962402c46c0d7dbc4b355f4))
+* v2.0 delta engine - STATUS_CHANGE/UPDATED for free, optional source_url resolution ([8871bd1](https://github.com/stefanoseggio/mendoza-compras-monitor/commit/8871bd1ffa4f64cb1f95a9848b9b838a07a323e8))
+
+
+### Bug Fixes
+
+* cap maxItems and push data incrementally so a 600s timeout can't drop everything ([#9](https://github.com/stefanoseggio/mendoza-compras-monitor/issues/9)) ([6b10a4b](https://github.com/stefanoseggio/mendoza-compras-monitor/commit/6b10a4bda439ecdddede82ef46566ec2cdd55f64))
+* **ci:** pass RELEASE_PLEASE_TOKEN so release PRs skip the bot-approval gate ([cee8842](https://github.com/stefanoseggio/mendoza-compras-monitor/commit/cee8842a7cfea643ba12e183086e38b99bddd8e1))
+
 ## 2.0.1 - 2026-09-14
 
 ### Fixed
