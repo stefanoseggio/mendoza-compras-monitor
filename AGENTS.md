@@ -291,6 +291,62 @@ request-queue/dataset/KV store are) - not verified again here
 independently since HSE already confirmed it and the mechanism (a
 DIFFERENT, explicitly-named store) is identical.
 
+## Timeout budget (2026-09-19 fix)
+
+**Confirmed bug**: this actor's live `defaultRunOptions.timeoutSecs` is **600s**
+(verified via `GET /v2/acts/stefano_Seggio~mendoza-compras-monitor`), but two
+things were true before this fix:
+
+1. `maxItems` had `minimum: 1` and no `maximum` in `.actor/input_schema.json` -
+   nothing related the size of a raw walk to the real 600s budget.
+2. `fetchTenders()` returned one big `tenders` array only after the *entire*
+   walk finished, and `main.ts` pushed all of it to the dataset in a loop
+   afterward - so a run killed by the platform timeout mid-walk lost every
+   record gathered so far, not just the ones still to come.
+
+**Real arithmetic** (constants read from the actual code, not estimated):
+
+- `resolveSourceUrl`'s per-row postback costs **~1.5s/row**, measured live
+  (see "source_url requires one extra request per returned record" above:
+  "4 requests took 6.0s"). This is the dominant, documented cost that scales
+  with `maxItems` when `resolveSourceUrl=true` (the default).
+- Happy-path (zero retries) time for a full walk: `T(maxItems) = maxItems x 1.5s`.
+  Since `maxItems` had no ceiling, `T` was unbounded - e.g. `maxItems=500` ->
+  `750s`, already past the 600s timeout with a perfectly healthy network and
+  zero errors. This alone reproduces the confirmed finding.
+- Sizing a cap at 70% of the real budget (600 x 0.7 = 420s) against the real
+  1.5s/row cost: `420 / 1.5 = 280`. **`maxItems.maximum` is now `280`.**
+- Retry-storm check, using the real retry constants in `requestWithRetry`
+  (`maxRetries=4`, `baseDelayMs=1000`, backoff `1000 * 2^attempt`): a single
+  row that exhausts all 4 retries burns `1000*(1+2+4+8)=15000ms` of pure
+  backoff delay alone, before any actual request time. If *every* row in a
+  280-item walk needed this, that's `280*15s=4200s` - far past 600s. This
+  scenario is real but self-limiting in practice: the home-page GET and the
+  two initial POSTs that establish the session are **not** wrapped in a
+  try/catch, so a network bad enough to make every row's postback exhaust
+  its retries would very likely already fail those un-degraded early
+  requests first, throwing and producing a clean early error record via
+  `main.ts`'s catch block - not a silent multi-hundred-row death march. The
+  input-schema cap above is sized against the documented, common
+  (healthy-network) cost, not this pathological tail.
+- Because that pathological tail is real even if rare, the more valuable fix
+  is architectural, not numeric: `fetchTenders()` now takes an `onTender`
+  callback invoked immediately when each record qualifies (`main.ts` pushes
+  it to the dataset right there, and returns `{ stop: true }` on
+  `eventChargeLimitReached` to halt the walk immediately instead of only
+  suppressing further pushes after an already-finished walk), and an
+  `onCheckpoint` callback invoked after every completed page with the
+  running `observedThisRun` snapshot, so the delta-state seen-set is also
+  saved incrementally. A run that still hits the 600s timeout - at any
+  `maxItems` value, for any reason - now loses only its unprocessed tail,
+  not everything gathered before the timeout.
+- `defaultRunOptions.timeoutSecs` itself was deliberately left at 600s: the
+  real problem was an uncapped input (option a) and end-of-walk-only
+  pushing (option c), not a workload that legitimately needs to run longer
+  than 600s at its now-capped maximum (280 rows x 1.5s = 420s, well under
+  600s) - raising the timeout instead would have papered over the same bug
+  at a larger, more expensive scale.
+
 ## Known scope limits (disclosed, not hidden)
 
 - The unfiltered backlog is huge: **25,784 processes** at audit time (10

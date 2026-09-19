@@ -118,6 +118,19 @@ export interface FetchTendersOptions {
     resolveSourceUrl: boolean;
     state: DeltaState;
     now: Date;
+    // Timeout-budget fix (see AGENTS.md "Timeout budget"): invoked the moment each tender
+    // qualifies, instead of waiting for the whole (potentially maxItems=280-row, ~7-minute)
+    // walk to finish before anything is pushed to the dataset. Returning { stop: true } (e.g.
+    // Actor.pushData's own eventChargeLimitReached) breaks the walk immediately - both the
+    // current page's row loop and further pagination - instead of the old behaviour of running
+    // the entire remaining walk to completion and only then discovering the flag had been set.
+    onTender?: (tender: TenderRow) => Promise<{ stop: boolean } | void>;
+    // Same fix applied to delta state: called once per completed page with the full
+    // observedThisRun snapshot so far, so a run that times out mid-walk still persists the
+    // seen-set progress it made up to the last completed page, not just up to the last
+    // successful dataset push. Safe to call repeatedly - saveState() replaces the whole
+    // snapshot each time, so a later call simply supersedes an earlier one.
+    onCheckpoint?: (observedSoFar: { id: string; entry: SeenEntry }[]) => Promise<void>;
 }
 
 export interface FetchTendersResult {
@@ -158,17 +171,20 @@ function classify(previous: SeenEntry | undefined, row: ParsedTenderRow, hash: s
 // rather than early-stop pagination: this listing is sorted by numero de
 // proceso ascending, NOT newest-first, verified live).
 export async function fetchTenders(options: FetchTendersOptions): Promise<FetchTendersResult> {
-    const { maxItems, onlyNew, eventTypes, dateRange, resolveSourceUrl: shouldResolveSourceUrl, state, now } = options;
+    const { maxItems, onlyNew, eventTypes, dateRange, resolveSourceUrl: shouldResolveSourceUrl, state, now, onTender, onCheckpoint } =
+        options;
     const allowedEventTypes = eventTypes ? new Set<EventType>(eventTypes) : null;
     const scrapedAt = now.toISOString();
 
     const rawIds = new Set<string>(); // dedup + raw maxItems cap, same role the old `seenIds` Set played
     const tenders: TenderRow[] = [];
     const observedThisRun: { id: string; entry: SeenEntry }[] = [];
+    let stopRequested = false;
 
     async function processRows(rows: ParsedTenderRow[], $: CheerioAPI, cookie: string | null): Promise<number> {
         let added = 0;
         for (const row of rows) {
+            if (stopRequested) break;
             if (rawIds.size >= maxItems) break;
             if (rawIds.has(row.numeroProceso)) continue;
             rawIds.add(row.numeroProceso);
@@ -187,7 +203,7 @@ export async function fetchTenders(options: FetchTendersOptions): Promise<FetchT
             const sourceUrl =
                 shouldResolveSourceUrl && row.linkTarget ? await resolveSourceUrlPostback($, cookie, row.linkTarget) : null;
 
-            tenders.push({
+            const tender: TenderRow = {
                 sourceUrlResolved: sourceUrl !== null,
                 numeroProceso: row.numeroProceso,
                 nombreProceso: row.nombreProceso,
@@ -209,7 +225,16 @@ export async function fetchTenders(options: FetchTendersOptions): Promise<FetchT
                 // process-specific. Disclosed in AGENTS.md/README, not
                 // silently swallowed.
                 source_url: sourceUrl ?? SEARCH_URL,
-            });
+            };
+            tenders.push(tender);
+
+            // Timeout-budget fix: push this record now, not after the whole walk finishes -
+            // see the FetchTendersOptions.onTender doc comment.
+            const result = await onTender?.(tender);
+            if (result?.stop) {
+                stopRequested = true;
+                break;
+            }
         }
         return added;
     }
@@ -246,10 +271,11 @@ export async function fetchTenders(options: FetchTendersOptions): Promise<FetchT
     const page1Rows = parseGrid($);
     await processRows(page1Rows, $, cookie);
     log.info(`Pagina 1: ${page1Rows.length} procesos`);
+    await onCheckpoint?.(observedThisRun);
 
     let previousFirstId = page1Rows[0]?.numeroProceso ?? null;
 
-    for (let pageNum = 2; pageNum <= MAX_PAGES_SAFETY_CAP && rawIds.size < maxItems; pageNum++) {
+    for (let pageNum = 2; pageNum <= MAX_PAGES_SAFETY_CAP && rawIds.size < maxItems && !stopRequested; pageNum++) {
         const pagePayload = buildPostbackPayload($, GRID_TARGET, `Page$${pageNum}`);
         let response: Response;
         try {
@@ -283,6 +309,7 @@ export async function fetchTenders(options: FetchTendersOptions): Promise<FetchT
         previousFirstId = firstId;
 
         await processRows(rows, $, cookie);
+        await onCheckpoint?.(observedThisRun);
         if (pageNum % 20 === 0 || rows.length < PAGE_SIZE) {
             log.info(
                 `Pagina ${pageNum}: ${rows.length} procesos (acumulado crudo: ${rawIds.size}, en salida: ${tenders.length})`,

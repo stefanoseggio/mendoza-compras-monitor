@@ -7,9 +7,10 @@
         "maxItems": {
             "title": "Max processes to extract",
             "type": "integer",
-            "description": "Hard cap on the number of RAW processes walked this run (10 per page, 25,000+ total at audit time). This is the same cap as before - onlyNew/dateRange are applied on top of this raw walk as post-filters, so the number of records actually returned can be lower than maxItems when either is active. This actor does not yet expose the advanced-search form's own filters (date range, organism, process type) as actor input; start small, raise gradually. Default kept low (20) because resolveSourceUrl's per-row postback (~1.5s each, see its own description) makes a 100-item blank run take several minutes end-to-end against this site's real latency - raise this for a real monitoring run.",
+            "description": "Hard cap on the number of RAW processes walked this run (10 per page, 25,000+ total at audit time). This is the same cap as before - onlyNew/dateRange are applied on top of this raw walk as post-filters, so the number of records actually returned can be lower than maxItems when either is active. This actor does not yet expose the advanced-search form's own filters (date range, organism, process type) as actor input; start small, raise gradually. Default kept low (20) because resolveSourceUrl's per-row postback (~1.5s each, see its own description) makes a 100-item blank run take several minutes end-to-end against this site's real latency - raise this for a real monitoring run. Capped at 280: this actor's real defaultRunOptions.timeoutSecs is 600s, and at the documented, measured ~1.5s/row cost of the resolveSourceUrl postback, 280 rows is the largest value whose happy-path walk (280 x 1.5s = 420s) still fits within 70% of that 600s budget - values above this are not just slow, they are mathematically guaranteed to run past the timeout before finishing even one full walk. Results are now pushed to the dataset as they are found (not only at the end), so a run that still hits the timeout above this cap loses only its unprocessed tail, not everything - but the cap keeps a normal, healthy run from being designed to fail from the start. See AGENTS.md 'Timeout budget' for the arithmetic.",
             "default": 20,
-            "minimum": 1
+            "minimum": 1,
+            "maximum": 280
         },
         "onlyNew": {
             "title": "Only new records (delta mode)",
